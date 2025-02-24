@@ -48,31 +48,34 @@ myvec <- c(8, 4, 12, 9, 15, 6)
 
 myvec_max <- max(myvec)
 
-mymat[is.na(mymat)] <- myvec_max
-
-print(mymat)
-
-print(length(mymat[ ,1]))
-
-for (i in length(mymat[ ,1])){
-  for (j in length(mymat[i, ]){
-    if (is.na(mymat[i, j])){
-      mymat[i, j] <- myvec_max
-    }
-  }
-}
-
-print(mymat)
-
 for (i in 1:nrow(mymat)){
+  myvec_max <- max(myvec)
   for (j in 1:ncol(mymat)){
     if (is.na(mymat[i, j])){
       mymat[i, j] <- myvec_max
     }
   }
+  myvec <- myvec[!(myvec == myvec_max)]
 }
 
 print(mymat)
-  
 
+#---- Aufgabe 3 ---
 
+myvec_2 <- c(1:100)
+
+for (i in 1:max(myvec_2)){
+  if (myvec_2[i] <= 25){
+    myvec_2[i] <- 6
+  } else if (myvec_2[i] >= 65){
+    myvec_2[i] <- -20
+  } else {
+    myvec_2[i] <- NA
+  }
+}
+
+print(myvec_2)
+
+vec_interpol <- approx(seq_along(myvec_2), myvec_2, method = "linear", seq_along(myvec_2))$y
+
+plot(vec_interpol)
