@@ -76,6 +76,6 @@ for (i in 1:max(myvec_2)){
 
 print(myvec_2)
 
-vec_interpol <- approx(seq_along(myvec_2), myvec_2, method = "linear", seq_along(myvec_2))$y
+vec_interpol <- approx(myvec_2, method = "linear")
 
 plot(vec_interpol)
