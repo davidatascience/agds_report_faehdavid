@@ -1,0 +1,392 @@
+---
+title: "re_stepwise"
+author: "David Fäh 23-106-396"
+output: html_document
+date: "2025-04-07"
+---
+
+## Introduction
+
+```{r setup, warning=FALSE, message=FALSE}
+
+# load libraries
+library(tidyverse)
+library(ggplot2)
+library(cowplot)
+
+
+# load data
+url_01 <- "https://raw.githubusercontent.com/geco-bern/agds_book/refs/heads/main/book/data/df_for_stepwise_regression.csv"
+
+half_hourly_fluxes <- read.table(
+  url_01, 
+  header = TRUE,
+  sep = ","
+)
+
+# select numeric variables only and drop NA
+fluxes_numeric <- half_hourly_fluxes |>
+  select(-starts_with("TIMESTAMP"), -starts_with("siteid")) |>
+  drop_na()
+
+```
+
+## Bivariate model
+
+```{r}
+
+# create data frame to store results
+lm_results <- data.frame(
+  predictor = character(), 
+  R2 = numeric())
+
+
+# create vector to store possible predictors
+predictors <- setdiff(names(fluxes_numeric), "GPP_NT_VUT_REF")
+
+
+# fit linear regression models with different predictors
+for (predictor in predictors){
+  
+  # define the model
+  lm_formula <- as.formula(paste("GPP_NT_VUT_REF ~ ", predictor))
+  linear_model <- lm(lm_formula, data = fluxes_numeric)
+  
+  # calculate coefficient of determination R²
+  r2 <- summary(linear_model)$r.squared
+  
+  # store results
+  lm_results <- bind_rows(
+    lm_results, 
+    data.frame(predictor = predictor, R2 = r2))
+}
+
+
+# select the predictor with highest R²
+best_single_predictor <- lm_results$predictor[which.max(lm_results$R2)]
+
+
+# define best bivariate model 
+best_bivariate_model <- lm(
+  GPP_NT_VUT_REF ~ fluxes_numeric[[best_single_predictor]],
+  data = fluxes_numeric)
+
+
+# calculate AIC for best bivariate model
+bivariate_model_aic <- AIC(best_bivariate_model)
+
+```
+
+
+**Visualization and discussing results**
+
+Comparing R² values of the different models with a bar plot:
+
+
+```{r}
+
+# compare R² values of linear models visually
+barplot_lm_results <- ggplot(
+  lm_results, 
+  aes(x = predictor, y = R2)) +
+  geom_bar(
+    stat = "identity", 
+    fill = "darkgrey", 
+    color = "black") +
+  labs(
+    x = "Predictor", 
+    y = expression(R^2)) +
+  coord_flip() +
+  theme_minimal()
+
+barplot_lm_results
+
+```
+
+
+This barplot shows that for a bivariate linear regression model, PPFD_IN 
+explains the most variance in GPP among all tested predictors. 
+
+Because it has the highest R² value:
+
+
+```{r}
+
+# print R² of the best predictor
+knitr::kable(lm_results[which.max(lm_results$R2), ], 
+             row.names = FALSE)
+
+# print aic of best bivariate model
+cat("The AIC of the linear model that uses PPFD_IN as predictor is:", bivariate_model_aic)
+
+```
+
+**PPFD_IN** stands for **Photosynthetic Photon Flux Density incoming**.
+
+- It measures the amount of light available for plants to photosynthesize 
+(400-700nm), that reaches a surface. 
+
+- It is measured in: μmol photons * m⁻² * s⁻¹
+
+- I think it makes sense that PPFD_IN can explain parts of GPP because plants 
+require light to photosynthesize. When there is more light available, this might 
+enhance photosynthesis. Leading to increased productivity and therefore to a
+higher GPP.
+
+
+## Stepwise forward regression
+
+```{r}
+
+# define vector containing potential predictors for GPP
+predictors <- setdiff(names(fluxes_numeric), "GPP_NT_VUT_REF")
+
+
+# define vector to store best predictors
+best_model_predictors <- c()
+
+
+# define data frame to store results
+stepwise_results <- data.frame(
+  predictor = character(), 
+  R2 = numeric())
+
+
+# make sure the loop runs at least once
+new_model_aic <- -Inf
+best_model_aic <- Inf
+
+
+# store R² and AIC results over iterations
+r2_values <- c()
+aic_values <- c()
+
+
+
+# loop runs until new model's AIC is higher than previous model's AIC
+while(TRUE){
+  
+  # make sure data does not accumulate in storage data frame (clear for every iteraton)
+  stepwise_results <- data.frame(
+    predictor = character(), 
+    R2 = numeric())
+  
+  
+  for (predictor in predictors){
+    
+    # define formula for new model with additional predictor
+    formula <- as.formula(
+      paste("GPP_NT_VUT_REF ~ ", paste(c(best_model_predictors, predictor), collapse = "+")))
+    
+    # fit new model
+    new_model <- lm(formula, data = fluxes_numeric)
+    
+    # calculate R² for new model
+    r2 <- summary(new_model)$r.squared
+    
+    # store results
+    stepwise_results <- bind_rows(
+      stepwise_results, 
+      data.frame(predictor = predictor, R2 = r2))
+  }
+    
+  
+  # select best additional predictor based om highest R²
+  best_new_predictor <- stepwise_results$predictor[which.max(stepwise_results$R2)]
+    
+  # define new model with best additional predictor
+  formula <- as.formula(
+    paste("GPP_NT_VUT_REF ~ ", paste(c(best_model_predictors, best_new_predictor), collapse = "+")))
+  new_model <- lm(formula, data = fluxes_numeric)
+  
+  # calculate AIC for new model
+  new_model_aic <- AIC(new_model)
+  
+  
+  # check if new model is better than the previous one
+  if (new_model_aic < best_model_aic){
+    
+    # define best model and metrics
+    best_model <- new_model
+    best_model_aic <- new_model_aic
+    best_model_r2 <- summary(new_model)$r.squared
+    
+    # add best new predictor to the vector of model predictors
+    best_model_predictors <- c(best_model_predictors, best_new_predictor)
+    
+    # remove added predictor from the list of potential predictors
+    predictors <- setdiff(predictors, best_new_predictor)
+    
+    # store R² and AIC values for current model
+    r2_values <- c(r2_values, best_model_r2)
+    aic_values <- c(aic_values, best_model_aic)
+  }
+  
+  # if the old model is better, end the algorithm
+  else {
+    
+    break
+    
+  }
+}
+
+
+
+# print the result
+cat(
+  paste("The best fitting model is:", paste(format(formula(best_model)), collapse = "")))
+
+```
+
+**Plot R² and AIC for every step to check how these metrics developed across** 
+**the stepwise forward regression:**
+
+
+```{r, fig.width=10, fig.height=4}
+
+# plot R² for every step
+plot_r2_stepwise <- ggplot(
+  data = NULL, 
+  aes(x = seq_along(r2_values), y = r2_values)) +
+  geom_point() +
+  geom_line() +
+  labs(x = "Number of predictors", 
+       y = expression(R^2), 
+       title = "R² across stepwise forward regression") +
+  scale_x_continuous(breaks = seq(1, length(r2_values), by = 1)) +
+  theme_minimal()
+
+
+# plot AIC for every step
+plot_aic_stepwise <- ggplot(
+  data = NULL, 
+  aes(x = seq_along(r2_values), y = aic_values)) +
+  geom_point() + 
+  geom_line() +
+  labs(x = "Number of predictors", 
+       y = "AIC", 
+       title = "AIC across stepwise forward regression") +
+  scale_x_continuous(breaks = seq(1, length(r2_values), by = 1)) +
+  theme_minimal()
+
+
+# combine plots
+plot_grid(plot_r2_stepwise, plot_aic_stepwise, ncol = 2)
+
+
+```
+
+## Interpretation
+
+**Developement of R² and AIC:**
+
+- R²: As expected, R² increased with each additional predictor. The greatest 
+improvements occured within the first 6 predictors. After that, there were only 
+minor improvements in performance.
+
+- AIC: The AIC decreased with each additional predictor. At predictor number 11, 
+the curve would have started to rise again, so the loop stopped and selected the 
+optimal model according to the AIC. At this point, the penalty term of the AIC 
+began to take effect.
+Although AIC penalizes excessive model complexity, the final model included 10 
+predictors. However, it's important to note that after predictor 6, the 
+improvements in AIC were relatively small compared to the added complexity.
+Therefore, I argue that although the model with 10 predictors achieves the 
+lowest AIC, a simpler model could be preferable—one that significantly reduces 
+complexity without a substantial loss in performance. 
+
+
+
+
+**The predictors (added in this order) of the best model are:**
+
+- 1. **PPFD_IN** (Photosynthetic photon flux density, incoming): 
+Discussed above.
+
+- 2. **LW_IN_F** (Longwave radiation, incoming, consolidated from LW_IN_F_MDS and 
+LW_IN_ERA): 
+Influences surface and canopy temperatures. Higher incoming longwave 
+radiation can enhance photosynthesis by warming the plant. Plants are more 
+productive at higher temperatures.
+
+- 3. **VPD_F** (Vapor Pressure Deficit consolidated from VPD_F_MDS and VPD_ERA): 
+A measure of atmospheric dryness. High VPD limits photosynthesis because plants 
+close their stomata to conserve water. This limits the CO2 uptake, and reduced 
+productivity.
+
+- 4. **TA_F_MDS** (Air temperature, gapfilled using MDS method): Temperature affects 
+the rate of photosynthesis of plants. Higher temperatures enhance photosynthesis 
+and increased productivity.
+
+- 5. **WS_F** (Wind speed, consolidated from WS and WS_ERA): 
+High wind speeds enhance atmospheric mixing. This might improve CO2 
+availability and diffusion into leaves. Thus enhancing photosynthesis and 
+productivity.
+
+- 6. **USTAR** (Friction velocity): 
+Similar to wind speed. Measurement of turbulence near the surface. This might 
+complement wind speed.
+
+- 7. **SW_IN_F** (Shortwave radiation, incoming consolidated from SW_IN_F_MDS and 
+SW_IN_ERA, negative values set to zero): 
+Represents solar energy input. Similar 
+to PPFD_IN, might include some complementary information about energy that is 
+available to plants.
+
+- 8. **P_F** (Precipitation consolidated from P and P_ERA): 
+Precipitation influences soil moisture and water availability, which is 
+required for photosynthesis.
+
+- 9. **CO2_F_MDS** (CO2 mole fraction, gapfilled with MDS): 
+CO2 concentration influences carbon uptake of plants. Elevated CO2 levels might 
+enhance photosynthesis and production.
+
+- 10. **PA_F** (Atmospheric pressure consolidated from PA and PA_ERA): 
+Atmospheric pressure might impact the rate at which plants take up CO2, 
+influencing photosynthesis.
+
+
+**The included predictors can be categorized into different categories:**
+
+- **Light and energy related**: Availability of light directly drives 
+photosynthesis. They have a very strong impact.
+
+- **Temperature**: Affects enzymatic reactions in photosynthesis. Warmer 
+temperatures enhance productivity.
+
+- **Water availability**: Water, both in the soil and in the atmosphere is required 
+for photosynthesis.
+
+- **CO2**: Is needed for the plant to fix carbon during photosynthesis. Higher levels 
+enhance productivity.
+
+- **Wind and turbulence**: Influence the mixing of CO2 and water vapor which are 
+important for photosynthesis. 
+
+
+**Predictors that were not included in the final model are:**
+
+- **TA_F**: Air temperature, consolidated from TA_F_MDS and TA_ERA
+
+- **SW_IN_F_MDS**: Shortwave radiation, incoming, gapfilled using MDS (negative 
+values set to zero, e.g., negative values from instrumentation noise)
+
+- **LW_IN_F_MDS**: Longwave radiation, incoming, gapfilled using MDS
+
+- **LW_IN_F_MDS**: Longwave radiation, incoming, gapfilled using MDS
+
+- **VPD_F_MDS**: Vapor Pressure Deficit, gapfilled using MDS
+
+
+These predictors might have been excluded due to collinearity. Their 
+information was already covered by similar variables in the model. In most 
+cases, the gapfilled versions were left out, which can have two reasons:
+
+- The model favored similar variables that were not gapfilled because of more 
+complete and exact data that explained the variance.
+
+- Since stepwise forward regression was used to find the best fitting model, 
+the order in which the variables were evaluated have an influence. So, if a 
+similar variable has already been inlcuded, the new one was skipped because 
+it was mostly redundant and did not offer enough additional information to 
+improve the model further.

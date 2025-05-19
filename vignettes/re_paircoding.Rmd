@@ -1,0 +1,12 @@
+---
+title: "re_paircoding"
+author: "David Fäh 23-106-396"
+output: html_document
+date: "2025-05-15"
+---
+
+The links to the repositories that were used in the paircoding report exercise:
+
+https://github.com/davidatascience/re_chapter_8
+
+https://github.com/davidatascience/repos_chapter_8_eguancho_forked

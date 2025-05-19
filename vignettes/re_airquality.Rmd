@@ -1,0 +1,243 @@
+---
+title: "re_airquality"
+author: "David Fäh 23-106-396"
+output: html_document
+date: "2025-03-05"
+---
+
+## Introduction
+
+```{r setup, warning=FALSE, message=FALSE}
+
+# load libraries
+library(tidyverse)
+
+```
+
+
+**The airquality data set:**
+Airquality is a data set built into R. It contains daily measurements of the 
+atmosphere taken in New York City in 1973 from May 1st to September 30th.
+
+The measured variables are:
+
+- Ozone [ppb]
+- Solar.R [Ly]
+- Wind [mph]
+- Temp [°F]
+- Month [numeric]
+- Day [numeric]
+
+
+```{r}
+
+# load data set airquality
+airquality <- datasets::airquality
+
+```
+
+
+**An overview of the data set:**
+
+
+```{r}
+
+# present the first few rows
+knitr::kable(head(airquality))
+
+```
+
+
+The data set includes 153 observations within 6 variables in total. But there are 
+missing values in the Ozone and Solar.R variables. Given the relatively small 
+number of observations, I do not interpolate values but drop rows containing NA.
+
+**My cleaned data contains:**
+
+- 6 Variables
+- 111 Observations
+  
+
+```{r}
+
+# clean data 
+airquality_clean <- airquality |> drop_na()
+
+```
+
+
+### My hypotheses:
+
+- Higher solar radiation increases ozone concentration as it catalyzes ozone 
+formation.
+- Higher temperatures accelerate ozone formation, creating a seasonal trend with 
+higher values in summer.
+- Higher wind speeds reduce ozone concentration by dispersing the molecules.
+
+
+## Analysis
+
+To gain an overview over the cleaned data set and over the remaining values, 
+I plot the distribution of observations by month.
+
+
+```{r}
+
+ggplot(
+  data = airquality_clean, 
+  aes(x = factor(Month))) +
+  geom_bar(fill = "darkgrey", color = "black") +
+  labs(
+    x = "Month", 
+    y = "Number of Observations", 
+    title = "Distribution of Observations per Month") +
+  theme_minimal()
+
+```
+
+
+June has very few observations, which makes it harder to compare months and could 
+influence with the overall trend.
+
+Next, I will analyze the variation in ozone concentration by calculating the 
+standard deviation.
+
+
+```{r}
+
+# calculate standard deviation
+ozone_sd <- sd(airquality_clean$Ozone)
+
+# present result
+cat("The ozone standard deviation is:", round(ozone_sd, digits = 2))
+
+```
+
+
+The high variability suggests that weather conditions may affect ozone concentration. 
+To identify seasonal trends, I plot the ozone distribution for each month.
+
+
+```{r}
+
+# plot distribution for each month
+ggplot(
+  data = airquality_clean,
+  aes(x = factor(Month), y = Ozone)) +
+  geom_boxplot(fill = "darkgrey", color = "black") +
+  labs(
+    x = "Month", 
+    y = "Ozone (ppb)",
+    title = "Ozone distribution for each month") +
+  theme_minimal()
+
+```
+
+
+The boxplots support the hypothesis of rising ozone concentrations during the 
+summer months. 
+The large difference in means between June and July might be due to little 
+observations in June. 
+The increase could be due to both higher solar radiation and temperatures. 
+
+To explore this, I analyze the correlation between ozone, solar radiation, and 
+temperature using scatter plots.
+
+
+```{r}
+
+# plot correlation between ozone and solar radiation
+plot_solar_radiation <- ggplot(
+  data = airquality_clean,
+  aes(x = Solar.R, y = Ozone)) + 
+  geom_point() +
+  geom_smooth(method = "lm", color = "red") +
+  labs(
+    title = "Correlation Ozone vs. Solar Radiation",
+    x = expression(paste("Solar radiation [cal m"^-2, "]")), 
+    y = expression(paste("Ozone [ppb]"))) +
+  theme_minimal()
+
+
+# plot correlation between ozone and temperature
+plot_temp <- ggplot(
+  data = airquality_clean,
+  aes(x = Temp, y = Ozone)) + 
+  geom_point() +
+  geom_smooth(method = "lm", color = "red") +
+  labs(
+    title = "Correlation Ozone vs. Temperature",
+    x = expression(paste("Temperature [", degree, "F]")),  # Using 'degree' for the degree symbol
+    y = expression(paste("Ozone [ppb]"))) +
+  theme_minimal()
+
+
+# Combine plots side by side
+cowplot::plot_grid(plot_solar_radiation, plot_temp, ncol = 2)
+
+```
+
+
+The regression line (red) suggests a stronger correlation between ozone concentration 
+and temperature compared to the correlation between ozone concentration and solar 
+radiation. 
+
+To quantify this, I calculate the Pearson correlation coefficient for both 
+variables.
+
+
+```{r}
+
+# calculate pearson correlation coefficients
+cor_solar <- cor(x = airquality_clean$Ozone, y = airquality_clean$Solar.R, method = "pearson")
+cor_temp <- cor(x = airquality_clean$Ozone, y = airquality_clean$Temp, method = "pearson")
+
+# store results in a data frame
+pearson_cor <- data.frame(
+  Correlated_Variables = c("Ozone vs Solar Radiation", "Ozone vs Temperature"),
+  Pearson_Correlation = c(cor_solar, cor_temp))
+
+# present pearson correlation coefficients
+knitr::kable(pearson_cor)
+
+```
+
+
+Since temperature shows a stronger correlation with ozone concentration, 
+I will focus on this relationship for further analysis.
+
+Next, I will consider the effect of wind by incorporating it into the correlation 
+plot using the color aesthetic.
+
+
+```{r}
+
+# plot ozone concentration vs temperature, incorporating wind speed through color
+ggplot(
+  data = airquality_clean,
+  aes(x = Temp, y = Ozone, colour = Wind)) + 
+  geom_point() +
+  scale_color_viridis_c() + 
+  labs(
+    title = "Ozone Concentration vs Temperature with Wind Speed as a Color Indicator",
+    x = expression(paste("Temperature [", degree, "F]")),  # Using 'degree' for the degree symbol
+    y = expression(paste("Ozone [ppb]"))) +
+  theme_minimal()
+
+```
+
+
+This negative correlation between ozone levels and wind speeds supports my hypothesis. 
+
+Temperature measurements showed an unusual frequency of certain values, 
+indicating measurement errors. So the results must be taken with caution.
+
+
+## Conclusion
+
+Missing values complicated month-to-moth comparison. However, a seasonal trend 
+in local ozone concentration, peaking in the months July and August could be 
+observed. These high values show a positive relation to both temperature and solar 
+radiation. Temperature correlates stronger than solar radiation. I could not 
+answer why that is the case. 
+Further, ozone concentration correlates negative to the wind speed.

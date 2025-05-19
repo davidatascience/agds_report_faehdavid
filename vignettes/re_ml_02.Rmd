@@ -1,0 +1,368 @@
+---
+title: "re_ml_02"
+author: "David Fäh 23-106-396"
+output: 
+  html_document:
+    toc: true
+date: "2025-04-29"
+---
+
+## Introduction
+
+```{r setup, warning=FALSE, message=FALSE}
+
+# load libraries
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(tidyr)
+library(caret)
+library(recipes)
+library(here)
+library(cowplot)
+
+# load data
+laegern_fluxes <- read_csv(here::here("data/FLX_CH-Lae_FLUXNET2015_FULLSET_DD_2004-2014_1-4.csv"))
+davos_fluxes <- read_csv(here::here("data/FLX_CH-Dav_FLUXNET2015_FULLSET_DD_1997-2014_1-3.csv"))
+
+
+
+# create function to clean data
+clean_flux_data <- function(data){
+  
+  # select only the variables we are interested in
+  data |> dplyr::select(TIMESTAMP,
+                        GPP_NT_VUT_REF,    # the target
+                        ends_with("_QC"),  # quality control info
+                        ends_with("_F"),   # includes all all meteorological covariates
+                        -contains("JSB")   # weird useless variable
+                        ) |>
+    
+    # convert to a nice date object
+    dplyr::mutate(TIMESTAMP = lubridate::ymd(TIMESTAMP)) |>
+    
+    # set all -9999 to NA
+    mutate(across(where(is.numeric), ~na_if(., -9999))) |> 
+    
+    # retain only data based on >=80% good-quality measurements
+    # overwrite bad data with NA (not dropping rows)
+    dplyr::mutate(GPP_NT_VUT_REF = ifelse(NEE_VUT_REF_QC < 0.8, NA, GPP_NT_VUT_REF),
+                  TA_F           = ifelse(TA_F_QC        < 0.8, NA, TA_F),
+                  SW_IN_F        = ifelse(SW_IN_F_QC     < 0.8, NA, SW_IN_F),
+                  LW_IN_F        = ifelse(LW_IN_F_QC     < 0.8, NA, LW_IN_F),
+                  VPD_F          = ifelse(VPD_F_QC       < 0.8, NA, VPD_F),
+                  PA_F           = ifelse(PA_F_QC        < 0.8, NA, PA_F),
+                  P_F            = ifelse(P_F_QC         < 0.8, NA, P_F),
+                  WS_F           = ifelse(WS_F_QC        < 0.8, NA, WS_F)) |> 
+    
+    # drop QC variables (no longer needed)
+    dplyr::select(-ends_with("_QC")) |>
+    dplyr::select(-P_F) # drop P_F because for Laegern, the whole column is NA
+}
+
+
+
+# clean data
+davos_fluxes <- clean_flux_data(davos_fluxes)
+laegern_fluxes <- clean_flux_data(laegern_fluxes)
+
+```
+
+## Modeling
+
+```{r}
+
+# set seed
+set.seed(1984)
+
+# define function to split data
+split_data <- function(data){
+  split <- rsample::initial_split(data, prop = 0.8, strata = "VPD_F")
+  list(
+    train = rsample::training(split), 
+    test = rsample::testing(split))
+}
+
+# split data from davos and laegern sites
+davos_split <- split_data(davos_fluxes)
+laegern_split <- split_data(laegern_fluxes)
+
+# define a combined data set for train and test data
+combined_split <- list(
+  train = bind_rows(davos_split$train, laegern_split$train), 
+  test = bind_rows(davos_split$test, laegern_split$test))
+
+
+# define function to create a recipe
+create_recipe <- function(data){
+  # Model and pre-processing formulation, use all variables but LW_IN_F
+  recipes::recipe(GPP_NT_VUT_REF ~ SW_IN_F + VPD_F + TA_F, 
+                  data = data |> drop_na()) |> 
+  step_center(all_numeric(), -all_outcomes()) |>
+  step_scale(all_numeric(), -all_outcomes())
+}
+
+# create recipes
+davos_recipe <- create_recipe(davos_split$train)
+laegern_recipe <- create_recipe(laegern_split$train)
+combined_recipe <- create_recipe(combined_split$train)
+
+
+# define function to fit KNN model 
+# use cross validation and hyperparameter tuning for optimal results
+fit_knn_model <- function(train_data, recipe){
+  caret::train(
+  recipe, 
+  data = train_data |> drop_na(), 
+  method = "knn",
+  trControl = caret::trainControl(method = "cv", number = 10),
+  tuneGrid = data.frame(k = seq(1, 50)),
+  metric = "RMSE"
+ )
+}
+
+# fit model
+davos_only_model <- fit_knn_model(davos_split$train, davos_recipe)
+laegern_only_model <- fit_knn_model(laegern_split$train, laegern_recipe)
+combined_model <- fit_knn_model(combined_split$train, combined_recipe)
+
+
+
+# define function to test the model and extract metrics
+test_model <- function(model, test_data){
+  
+  # drop NA from test data
+  test_data <- test_data |> drop_na()
+  
+  # define predictions and observations
+  predictions <- predict(model, newdata = test_data)
+  observations <- test_data$GPP_NT_VUT_REF
+  
+  # calculate metrics
+  r2 <- cor(observations, predictions)^2
+  rmse <- sqrt(mean((observations - predictions)^2))
+  
+  return(c(R2 = r2, RMSE = rmse))
+}
+
+```
+
+## Evaluate models
+
+```{r}
+
+davos_evaluation <- bind_rows(
+  "Evaluation against Davos test set: " = test_model(davos_only_model, davos_split$test), 
+  "Evaluation against Laegern test set: " = test_model(davos_only_model, laegern_split$test), 
+  "Evaluation against combined test set: " = test_model(davos_only_model, combined_split$test), 
+  .id = "Model trained on data from Davos"
+)
+
+laegern_evaluation <- bind_rows(
+  "Evaluation against Davos test set: " = test_model(laegern_only_model, davos_split$test), 
+  "Evaluation against Laegern test set: " = test_model(laegern_only_model, laegern_split$test), 
+  "Evaluation against combined test set: " = test_model(laegern_only_model, combined_split$test),  
+  .id = "Model trained on data from Laegern"
+)
+
+combined_evaluation <- bind_rows(
+  "Evaluation against Davos test set: " = test_model(combined_model, davos_split$test), 
+  "Evaluation against Laegern test set: " = test_model(combined_model, laegern_split$test), 
+  "Evaluation against combined test set: " = test_model(combined_model, combined_split$test),  
+  .id = "Model trained on data from Laegern and Davos"
+)
+
+```
+
+**Present Results**
+
+```{r}
+
+knitr::kable(davos_evaluation)
+knitr::kable(laegern_evaluation)
+knitr::kable(combined_evaluation)
+
+```
+
+## Interpretation
+
+**What are the patterns that you see in the tables?**
+
+- Each model performs best when evaluated on test data from the same site that it was 
+trained on. This makes sense because the sites differ in environmental conditions 
+and the model is "used to" the environment of the respective site. 
+- The combined model is the second best on Davos data and Laegern data. This also 
+makes sense because it captures more environmental variability. It is trained 
+with a "mix" of both environments, leading to more accurate predictions on new 
+sites than if a model is trained with data from a completely different environment. 
+But its performance is not as strong as that of a model trained exclusively on the test site.
+- The combined model has the best over-all performance (highest generalisability). 
+
+**How well do models trained on one site perform on another site? Why is this the case?**
+
+- The models that were trained only with data from one site perform best on this 
+respective site.
+- On other sites, they perform much worse because the KNN model was trained with 
+data from another location. The sites differ in environmental conditions such as 
+altitude, temperature and length of growing season.
+
+  - Davos: 
+    - Elevation: 1639m (in the alps)
+    - Mean Annual Temperature: 2.8 °C
+    - Dominant vegetation: Evergreen needle leaf forests
+    - Vegetation growing season: 100 - 120 days
+    
+  - Laegern: 
+    - Elevation: 689m (before the alpine ridge)
+    - Mean Annual Temperature: 8.3 °C
+    - Dominant vegetation: mixed forests
+    - Vegetation growing season: 180 - 210 days
+    
+- Example: The model trained on Davos data looks for similar neighbors when 
+applied to the Laegern data. But the data follows different patterns and therefore 
+the neighbors are not as powerful to make predictions.
+
+### Validation of my interpretation
+
+To test this, I apply the Davos-trained model to Laegern data and vice versa.
+My hypothesis is that the Davos-trained model will predict a GPP for Laegern that 
+is too low compared to the observations. The Laegern-trained model on the other 
+hand will predict a GPP for Davos that is too high compared to the observations.
+
+```{r}
+
+# define function to get model predictions vs. observations along a time-series
+get_model_predictions <- function(model, test_data){
+  
+  # drop NA from test data
+  test_data <- test_data |> drop_na()
+  
+  # define predictions and observations
+  predictions <- predict(model, newdata = test_data)
+  observations <- test_data$GPP_NT_VUT_REF
+  
+  return(data.frame(
+    Predictions = predictions, 
+    Observations = observations,
+    Date = test_data$TIMESTAMP))
+}
+
+```
+
+```{r}
+
+# davos-trained model on laegern site
+davos_laegern <- get_model_predictions(davos_only_model, laegern_fluxes)
+
+# plot time series
+plot_davos_laegern <- ggplot(
+  data = davos_laegern, 
+  aes(x = Date)) +
+  geom_line(aes(y = Observations, color = "Observed")) +
+  geom_line(aes(y = Predictions, color = "Predicted")) +
+  labs(
+    title = "Davos-trained Model Applied to Laegern Data",
+    x = "Date",
+    y = "GPP",
+    color = "Legend") +
+  scale_color_manual(values = c("Observed" = "black", "Predicted" = "red")) +
+  theme_minimal()
+
+
+
+# laegern-trained model on davos site
+laegern_davos <- get_model_predictions(laegern_only_model, davos_fluxes)
+
+# plot time series
+plot_laegern_laegern <- ggplot(
+  data = laegern_davos, 
+  aes(x = Date)) +
+  geom_line(aes(y = Observations, color = "Observed")) +
+  geom_line(aes(y = Predictions, color = "Predicted")) +
+  labs(
+    title = "Laegern-trained Model Applied to Davos Data",
+    x = "Date",
+    y = "GPP",
+    color = "Legend") +
+  scale_color_manual(values = c("Observed" = "black", "Predicted" = "red")) +
+  theme_minimal()
+
+
+
+# present both plots
+cowplot::plot_grid(plot_davos_laegern, plot_laegern_laegern, nrow = 2)
+
+```
+
+For further validation of this hypothesis, I compare the performance of both 
+models on the Laegern test data. The Laegern-trained model should perform better 
+while the Davos-trianed model should predict a GPP that is too low compared to 
+observations.
+
+```{r}
+
+# davos-trained model on laegern test data
+davos_laegern <- get_model_predictions(davos_only_model, laegern_split$test)
+
+# plot time series
+plot_davos_laegern <- ggplot(
+  data = davos_laegern, aes(x = Date)) +
+  geom_line(aes(y = Observations, color = "Observed")) +
+  geom_line(aes(y = Predictions, color = "Predicted")) +
+  labs(
+    title = "Davos-trained Model Applied to Laegern Data",
+    x = "Date",
+    y = "GPP",
+    color = "Legend") +
+  scale_color_manual(values = c("Observed" = "black", "Predicted" = "red")) +
+  theme_minimal()
+
+
+
+# laegern-trained model on laegern test data
+laegern_laegern <- get_model_predictions(laegern_only_model, laegern_split$test)
+
+# plot time series
+plot_laegern_laegern <- ggplot(
+  data = laegern_laegern, aes(x = Date)) +
+  geom_line(aes(y = Observations, color = "Observed")) +
+  geom_line(aes(y = Predictions, color = "Predicted")) +
+  labs(
+    title = "Laegern-trained Model Applied to Laegern Data",
+    x = "Date",
+    y = "GPP",
+    color = "Legend") +
+  scale_color_manual(values = c("Observed" = "black", "Predicted" = "red")) +
+  theme_minimal()
+
+
+
+# present both plots
+cowplot::plot_grid(plot_davos_laegern, plot_laegern_laegern, nrow = 2)
+
+```
+
+## Learnings
+
+**How does the model trained on both sites perform on the three test sets? Why is this the case?**
+
+- It has the best over-all performance. It performs best on the combined data 
+and second best on Davos and Laegern data.
+- It is more generalizable because data from both sites have been used to fit 
+the model. This does mean that it has not encountered completely new data when 
+the model was tested while the Davos-trained and the Laegern-trained models were 
+exposed to completely new data. This increases the combined models performance.
+
+**When training and testing on both sites, is this a true ‘out-of-sample’ setup?** 
+
+- No, it is not a true out-of-sample setup. The model was already trained with 
+data from the same site as it is tested on. Even though it has never encountered 
+that exact data due to the data leakage-proof splitting, the data is likely very similar.
+
+**What would you expect if your model was tested against data from a site in Spain?**
+
+- Under the assumption that the climate on the site in Spain is mediterranian, 
+I would expect the Laegern-trained model to perform best. Because the environmental 
+conditions are more similar to Laegern than to Davos. The combined model is trained 
+on a "mix" of these two environments but it is a "compromise" that is further from 
+the Mediterranean conditions than a Laegern-only model.

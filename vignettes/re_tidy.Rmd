@@ -1,0 +1,104 @@
+---
+title: "re_tidy"
+author: "David Fäh 23-106-396"
+output: html_document
+date: "2025-03-01"
+---
+
+```{r setup, warning=FALSE, message=FALSE}
+
+# load libraries
+library(tidyverse)
+
+# load data
+co2_impact_data <- read_csv(here::here("data/dataset_1_tidy.csv"))
+
+```
+
+
+## Introduction
+
+**What are the data i am looking at?**
+
+- The data show the mean measured CO2 content of soil samples in different experiment 
+sites. In all sites, there were two environments created. One with ambient CO2 
+content in the atmosphere and one with elevated CO2 content in the atmosphere.
+The experiments have been running for running for various amount of time.
+The data also include the depth range of soil samples, the year and month of 
+sampling, and source citations.
+
+- **Source of the data:** 
+Groenigen, Kees Jan van, Xuan Qi, Craig W. Osenberg, Yiqi Luo, and Bruce A. Hungate. 
+“Faster Decomposition Under Increased Atmospheric CO2 Limits Soil Carbon Storage.
+” Science 344, no. 6183 (May 2, 2014): 508–9. https://doi.org/10.1126/science.1249534. 
+
+- The data was manually cleaned before my analysis.
+
+**What do I expect my analysis to show, what is my hypothesis?**
+**How should soil organic matter content change under elevated CO2?**
+
+**My hypothesis:**
+
+- Elevated CO2 content in the atmosphere will lead to an increase of soil organic 
+matter over time. 
+
+- Plants require CO2 for photosynthesis. Higher atmospheric CO2 levels enhance 
+photosynthesis and therefore lead to an increase in productivity / more biomass. 
+This biomass will over time fall off the plants and accumulate on the ground, 
+leading to an increased soil organic matter content.
+
+## Analysis
+
+
+```{r}
+# define early, mid and late phase since the start of the experiment
+early_phase <- co2_impact_data |> filter(experiment_duration_years < 3)
+mid_phase <- co2_impact_data |> filter(experiment_duration_years >= 3 & experiment_duration_years <= 6)
+late_phase <- co2_impact_data |> filter(experiment_duration_years > 6)
+
+# define a function that calculates the lrr
+calculate_lrr <- function(ambient, increased){
+  lrr <- (log(increased / ambient))
+  return(lrr)
+}
+
+# calculate the lrr for every phase
+early_phase$lrr <- calculate_lrr(early_phase$co2_ambient_mean, early_phase$co2_increased_mean)
+mid_phase$lrr   <- calculate_lrr(mid_phase$co2_ambient_mean, mid_phase$co2_increased_mean)
+late_phase$lrr  <- calculate_lrr(late_phase$co2_ambient_mean, late_phase$co2_increased_mean)
+
+# calculate the mean lrr for each phase and save it in a data frame
+lrr_summary <- data.frame(
+  phase = c("early", "mid", "late"),
+  mean_LRR = c(mean(early_phase$lrr, na.rm = TRUE),
+               mean(mid_phase$lrr, na.rm = TRUE),
+               mean(late_phase$lrr, na.rm = TRUE))
+)
+
+# present results
+knitr::kable(lrr_summary, caption = "Mean LRR for each phase")
+
+```
+
+
+## Interpretation
+
+**What do my final numbers mean?**
+
+The final numbers are the mean LRR for each phase defined. 
+This mean LRR shows how the soil organic content in the elevated CO2 environments 
+changes in relation to the ambient CO2 environments.
+Positive numbers indicate an increase in soil organic content in elevated CO2 
+conditions
+Negative numbers indicate a decrease in soil organic content in elevated CO2 
+conditions.
+
+The numbers do not support my initial hypothesis. 
+I predicted that increased CO2 conditions in the atmosphere would lead to an 
+increased soil organic content over time. But in the late phase, we observe a 
+decrease in organic soil content in the elevated CO2 conditions relative to the 
+ambient CO2 conditions. 
+My observations after the analysis match the findings from the paper, where it 
+was argued that increased CO2 levels also enhance decomposition of soil organic 
+content. Thus, not leading to an increase of soil organic content over time.
+
